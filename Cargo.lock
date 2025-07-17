@@ -630,7 +630,9 @@ dependencies = [
 
 [[package]]
 name = "vedvaring"
-version = "0.2.1"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "245190a90de6379ec8b3bfb4f6af23469dd22b859846bcdce7b8f167157d8097"
 dependencies = [
  "dirs",
  "serde",
