@@ -29,7 +29,18 @@
 
       # Optional: `nix develop` shell
       devShells.default = pkgs.mkShell {
-        buildInputs = with pkgs; [rustc cargo];
+        buildInputs = with pkgs; [
+          rustc
+          cargo
+          pkg-config
+          glib
+          libnotify
+        ];
       };
+
+      PKG_CONFIG_PATH = pkgs.lib.makeLibraryPath [
+        pkgs.glib
+        pkgs.libnotify
+      ];
     });
 }
