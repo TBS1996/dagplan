@@ -1,74 +1,35 @@
 {
+  description = "Dagplan";
+
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    flake-parts.url = "github:hercules-ci/flake-parts";
-    systems.url = "github:nix-systems/default";
-    rust-overlay.url = "github:oxalica/rust-overlay";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = inputs:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = import inputs.systems;
+  outputs = {
+    self,
+    nixpkgs,
+    flake-utils,
+    ...
+  }:
+    flake-utils.lib.eachDefaultSystem (system: let
+      pkgs = import nixpkgs {inherit system;};
+    in {
+      packages.default = pkgs.rustPlatform.buildRustPackage {
+        pname = "dagplan";
+        version = "0.1.0";
+        src = ./.;
 
-      perSystem = { config, self', pkgs, lib, system, ... }:
-        let
-          rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [
-              "rust-src"
-              "rust-analyzer"
-              "clippy"
-            ];
-	    targets = [ "wasm32-unknown-unknown" ];
-          };
-
-          rustBuildInputs = [
-            pkgs.openssl
-            pkgs.libiconv
-            pkgs.pkg-config
-          ] ++ lib.optionals pkgs.stdenv.isLinux [
-            pkgs.glib
-            pkgs.gtk3
-            pkgs.libsoup_3
-            pkgs.webkitgtk_4_1
-            pkgs.xdotool
-          ] ++ lib.optionals pkgs.stdenv.isDarwin (with pkgs.darwin.apple_sdk.frameworks; [
-            IOKit
-            Carbon
-            WebKit
-            Security
-            Cocoa
-          ]);
-
-        in
-        {
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            overlays = [
-              inputs.rust-overlay.overlays.default
-            ];
-          };
-
-          devShells.default = pkgs.mkShell {
-            name = "dioxus-dev";
-            buildInputs = rustBuildInputs ++ [
-	      pkgs.wasm-pack
-              pkgs.wasm-bindgen-cli
-              rustToolchain
-              pkgs.nodejs_20  # Adds Node.js
-              pkgs.tailwindcss # Adds TailwindCSS
-            ];
-
-            nativeBuildInputs = [
-              rustToolchain
-            ];
-
-            shellHook = ''
-              # For rust-analyzer 'hover' tooltips to work.
-              export RUST_SRC_PATH="${rustToolchain}/lib/rustlib/src/rust/library";
-              echo "Node.js and TailwindCSS are now available!"
-            '';
-          };
+        cargoLock = {
+          lockFile = ./Cargo.lock;
         };
-    };
-}
 
+        doCheck = false;
+      };
+
+      # Optional: `nix develop` shell
+      devShells.default = pkgs.mkShell {
+        buildInputs = with pkgs; [rustc cargo];
+      };
+    });
+}

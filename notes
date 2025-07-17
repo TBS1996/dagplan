@@ -1,0 +1,13 @@
+should try to like suggest the next thing
+
+like a dimmed view of the item and if you press enter it'll become part of your cal
+and like, you can press left-right arrows to go through diff suggestions
+can like suggest multiple things in a row
+
+but if you change the top one it'll change hte later one too based on location
+
+like each activity should have like a time to go to other activity
+
+like cleaning room is on the at home location, and then you can have like some stuff that has to be done in your office, then you can write how long it takes between those. then floyd-warshall to make a matrix of each activity to each other.
+
+
