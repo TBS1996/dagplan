@@ -25,6 +25,14 @@
         };
 
         doCheck = false;
+
+        nativeBuildInputs = [pkgs.pkg-config];
+
+        buildInputs = with pkgs; [
+          libnotify
+          glib
+          gdk-pixbuf
+        ];
       };
 
       # Optional: `nix develop` shell
@@ -35,6 +43,7 @@
           pkg-config
           glib
           libnotify
+          gdk-pixbuf
         ];
       };
 
