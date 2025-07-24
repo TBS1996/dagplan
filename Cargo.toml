@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 crossterm = "0.28.1"
+dirs = "6.0.0"
 humantime = "2.2.0"
 libnotify = "1.0.3"
 serde = { version = "1.0", features = ["derive"] }

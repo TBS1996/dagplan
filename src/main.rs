@@ -503,6 +503,13 @@ impl App {
 
         self.draw();
         let mut current_slot = self.current_slot();
+        if let Some(slot) = current_slot.clone() {
+            use std::io::Write;
+            let mut f = std::fs::File::create(dirs::home_dir().unwrap().join(".current_task")).unwrap();
+            let s = format!("{}", &slot.configured.name);
+            f.write_all(s.as_bytes()).unwrap();
+
+        }
         loop {
             self.draw();
             self.draw();
@@ -512,7 +519,10 @@ impl App {
                     let new_slot = self.current_slot();
                     if current_slot != new_slot {
                         if let Some(slot) = &new_slot {
-                            let s = format!("new task: {}", &slot.configured.name);
+                            use std::io::Write;
+                            let mut f = std::fs::File::create(dirs::home_dir().unwrap().join(".current_task")).unwrap();
+                            let s = format!("{}", &slot.configured.name);
+                            f.write_all(s.as_bytes()).unwrap();
 
                             libnotify::Notification::new(s.as_str(), None, None)
                                 .show()
