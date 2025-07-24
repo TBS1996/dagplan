@@ -35,16 +35,18 @@
         ];
       };
 
-      # Optional: `nix develop` shell
       devShells.default = pkgs.mkShell {
         buildInputs = with pkgs; [
           rustc
           cargo
+          rust-analyzer
           pkg-config
           glib
           libnotify
           gdk-pixbuf
         ];
+
+        RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
       };
 
       PKG_CONFIG_PATH = pkgs.lib.makeLibraryPath [

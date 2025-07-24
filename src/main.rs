@@ -5,6 +5,7 @@ use crossterm::event::{self, read, Event, KeyCode, MediaKeyCode};
 use crossterm::execute;
 use crossterm::style::{Attribute, Print, SetAttribute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
+use notify_rust::Notification;
 use serde::de::DeserializeOwned;
 use slot::{calculate_slots, dur, t, SlotDto, SlotResult};
 use std::collections::{HashMap, VecDeque};
@@ -13,6 +14,7 @@ use std::hash::Hash;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, sync::Arc};
 use uuid::Uuid;
 
@@ -66,7 +68,6 @@ fn main() {
     enable_raw_mode().unwrap();
     app.run();
     disable_raw_mode().unwrap();
-    libnotify::uninit();
 }
 
 #[derive(Copy, Clone, Default)]
@@ -496,7 +497,6 @@ impl App {
     }
 
     pub fn run(&mut self) {
-        libnotify::init("dayplanner").unwrap();
         self.stdout
             .execute(terminal::Clear(terminal::ClearType::All))
             .unwrap();
@@ -555,10 +555,42 @@ fn write_slot(slot: &SlotResult) {
 fn on_new_slot(slot: &SlotResult) {
     write_slot(slot);
 
+    // Since mako doesn't support editing notifications in-place, nuke all notifs if last
+    // one was less than 10 sec ago. This will avoid multiple notifs at same time
+    // with the unfortunate side effect it will also remove other notifs from other processes.
+    if update_timestamp() < std::time::Duration::from_secs(10)  {
+        let _ = std::process::Command::new("makoctl").arg("dismiss").output(); 
+    }
+
     let s = format!("new task: {}", &slot.configured.name);
-    libnotify::Notification::new(s.as_str(), None, None)
+    Notification::new()
+        .summary(&s)
+        .id(6006)
         .show()
         .unwrap();
+}
+
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+
+static LAST_TIMESTAMP: OnceLock<AtomicU64> = OnceLock::new();
+
+fn timestamp_store() -> &'static AtomicU64 {
+    LAST_TIMESTAMP.get_or_init(|| AtomicU64::new(0))
+}
+
+fn current_unix_time() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn update_timestamp() -> std::time::Duration {
+    let now = current_unix_time();
+    let prev = timestamp_store().swap(now, Ordering::SeqCst);
+    std::time::Duration::from_secs(now - prev)
 }
 
 
