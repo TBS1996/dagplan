@@ -1,26 +1,22 @@
 mod slot;
 
 use crossterm::cursor::{MoveLeft, MoveTo, MoveToColumn};
-use crossterm::event::{self, read, Event, KeyCode, MediaKeyCode};
+use crossterm::event::{self, read, Event, KeyCode};
 use crossterm::execute;
 use crossterm::style::{Attribute, Print, SetAttribute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use notify_rust::Notification;
-use serde::de::DeserializeOwned;
 use slot::{calculate_slots, dur, t, SlotDto, SlotResult};
-use std::collections::{HashMap, VecDeque};
-use std::fmt::Display;
-use std::hash::Hash;
+use std::collections::HashMap;
 use std::ops::ControlFlow;
-use std::path::PathBuf;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{fs, sync::Arc};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use vedvaring::{DefaultWithId, FsTrait, Saved};
 
-use chrono::{Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
+use chrono::{Duration, Local, NaiveDate, NaiveTime, Timelike};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,9 +24,7 @@ type ActId = Uuid;
 type SlotId = Uuid;
 
 use crossterm::{
-    cursor,
-    style::{self, Stylize},
-    terminal, ExecutableCommand, QueueableCommand,
+    terminal, ExecutableCommand,
 };
 use std::io::{self, Stdout, Write};
 
@@ -299,7 +293,7 @@ impl App {
     }
 
     fn current_index(&self) -> Option<usize> {
-        let mut slots = self.selected_day.read().slots_config.clone();
+        let slots = self.selected_day.read().slots_config.clone();
         if slots.is_empty() {
             return None;
         };

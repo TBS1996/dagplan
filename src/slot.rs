@@ -1,21 +1,11 @@
-use chrono::{Duration, NaiveDate, NaiveTime, Utc};
-use crossterm::cursor::MoveTo;
-use crossterm::execute;
-use crossterm::terminal::{Clear, ClearType};
-use serde::de::DeserializeOwned;
+use chrono::{Duration, NaiveTime};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
-use std::fmt::{write, Debug, Display};
-use std::io::{self, Write};
+use std::collections::VecDeque;
+use std::fmt::{Debug, Display};
 use std::mem;
-use std::path::PathBuf;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::{fs, sync::Arc};
 use uuid::Uuid;
-use vedvaring::{DefaultWithId, FsTrait, Saved};
 
 type ActId = Uuid;
-type SlotId = Uuid;
 
 pub fn calculate_slots(
     start_time: NaiveTime,
