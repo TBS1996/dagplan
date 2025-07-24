@@ -504,29 +504,29 @@ impl App {
         self.draw();
         let mut current_slot = self.current_slot();
         if let Some(slot) = current_slot.clone() {
-            use std::io::Write;
-            let mut f = std::fs::File::create(dirs::home_dir().unwrap().join(".current_task")).unwrap();
-            let s = format!("{}", &slot.configured.name);
-            f.write_all(s.as_bytes()).unwrap();
-
+            write_slot(&slot);
         }
         loop {
             self.draw();
             self.draw();
             let event = match timed_input(5) {
-                Some(event) => event,
+                Some(event) => {
+                    let new_slot = self.current_slot();
+                    if current_slot != new_slot {
+                        if let Some(slot) = &new_slot {
+                            on_new_slot(&slot);
+                        }
+                        current_slot = new_slot;
+                    }
+
+                    event
+
+                },
                 None => {
                     let new_slot = self.current_slot();
                     if current_slot != new_slot {
                         if let Some(slot) = &new_slot {
-                            use std::io::Write;
-                            let mut f = std::fs::File::create(dirs::home_dir().unwrap().join(".current_task")).unwrap();
-                            let s = format!("{}", &slot.configured.name);
-                            f.write_all(s.as_bytes()).unwrap();
-
-                            libnotify::Notification::new(s.as_str(), None, None)
-                                .show()
-                                .unwrap();
+                            on_new_slot(&slot);
                         }
                         current_slot = new_slot;
                     }
@@ -544,6 +544,24 @@ impl App {
         }
     }
 }
+
+fn write_slot(slot: &SlotResult) {
+    use std::io::Write;
+    let mut f = std::fs::File::create(dirs::home_dir().unwrap().join(".current_task")).unwrap();
+    f.write_all(slot.configured.name.as_bytes()).unwrap();
+
+}
+
+fn on_new_slot(slot: &SlotResult) {
+    write_slot(slot);
+
+    let s = format!("new task: {}", &slot.configured.name);
+    libnotify::Notification::new(s.as_str(), None, None)
+        .show()
+        .unwrap();
+}
+
+
 
 pub fn timed_input(timeout_secs: u64) -> Option<Event> {
     if event::poll(std::time::Duration::from_secs(timeout_secs)).ok()? {
