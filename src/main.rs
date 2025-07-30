@@ -8,10 +8,10 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use notify_rust::Notification;
 use slot::{calculate_slots, dur, t, SlotDto, SlotResult};
 use std::collections::HashMap;
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Deref};
+use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::Arc;
 use uuid::Uuid;
 
 use vedvaring::{DefaultWithId, FsTrait, Saved};
@@ -23,9 +23,7 @@ use serde::{Deserialize, Serialize};
 type ActId = Uuid;
 type SlotId = Uuid;
 
-use crossterm::{
-    terminal, ExecutableCommand,
-};
+use crossterm::{terminal, ExecutableCommand};
 use std::io::{self, Stdout, Write};
 
 fn current_time() -> NaiveTime {
@@ -270,7 +268,8 @@ impl App {
 
     pub fn start() -> Self {
         let today = current_day();
-        let day = Saved::load_or_create(today);
+        let day: Saved<Day> = Saved::load_or_create(today);
+        day.write().slots_config.make_valid();
         let mut days: HashMap<NaiveDate, Saved<Day>> = Default::default();
         days.insert(today, day.clone());
 
@@ -327,7 +326,7 @@ impl App {
             }
             Action::Quit => return ControlFlow::Break(()),
             Action::Edit => {
-                let mut slots = self.selected_day.read().slots_config.clone();
+                let slots = self.selected_day.read().slots_config.clone();
                 if slots.is_empty() {
                     return ControlFlow::Continue(());
                 };
@@ -359,8 +358,10 @@ impl App {
                     },
                 }
 
-                slots[idx] = selected_slot;
-                self.selected_day.write().slots_config = slots;
+                self.selected_day
+                    .write()
+                    .slots_config
+                    .over_ride(idx, selected_slot);
             }
             Action::Upswap => {
                 let mut slots = self.selected_day.read().slots_config.clone();
@@ -375,39 +376,33 @@ impl App {
                     && !(idx == 1 && slots.get(idx - 1).unwrap().config.start.is_some())
                 {
                     slots.swap(idx, idx - 1);
-                    self.selected_day.write().slots_config = slots;
+                    self.selected_day.write().slots_config.swap(idx, idx - 1);
                     self.cursor.up();
                 }
             }
             Action::Downswap => {
-                let mut slots = self.selected_day.read().slots_config.clone();
+                let slots = self.selected_day.read().slots_config.clone();
                 if slots.is_empty() {
                     return ControlFlow::Continue(());
                 };
 
                 let idx = self.cursor.index.clamp(0, slots.len() - 1);
 
-                if idx + 1 < slots.len() {
-                    slots.swap(idx, idx + 1);
-                }
-
-                self.selected_day.write().slots_config = slots;
+                self.selected_day.write().slots_config.swap(idx, idx + 1);
                 self.cursor
                     .down(self.selected_day.read().slots_config.len());
             }
             Action::Begin => {
-                let mut slots = self.selected_day.read().slots_config.clone();
+                let slots = self.selected_day.read().slots_config.clone();
                 if slots.is_empty() {
                     return ControlFlow::Continue(());
                 };
 
                 let idx = self.cursor.index.clamp(0, slots.len() - 1);
-                let mut selected_slot = slots.get(idx).unwrap().clone();
-
-                selected_slot.config.start = Some(current_time());
-                slots[idx] = selected_slot;
-
-                self.selected_day.write().slots_config = slots;
+                self.selected_day
+                    .write()
+                    .slots_config
+                    .set_start(idx, current_time());
             }
         }
 
@@ -514,8 +509,7 @@ impl App {
                     }
 
                     event
-
-                },
+                }
                 None => {
                     let new_slot = self.current_slot();
                     if current_slot != new_slot {
@@ -543,7 +537,6 @@ fn write_slot(slot: &SlotResult) {
     use std::io::Write;
     let mut f = std::fs::File::create(dirs::home_dir().unwrap().join(".current_task")).unwrap();
     f.write_all(slot.configured.name.as_bytes()).unwrap();
-
 }
 
 fn on_new_slot(slot: &SlotResult) {
@@ -552,18 +545,15 @@ fn on_new_slot(slot: &SlotResult) {
     // Since mako doesn't support editing notifications in-place, nuke all notifs if last
     // one was less than 10 sec ago. This will avoid multiple notifs at same time
     // with the unfortunate side effect it will also remove other notifs from other processes.
-    if update_timestamp() < std::time::Duration::from_secs(10)  {
-        let _ = std::process::Command::new("makoctl").arg("dismiss").output(); 
+    if update_timestamp() < std::time::Duration::from_secs(10) {
+        let _ = std::process::Command::new("makoctl")
+            .arg("dismiss")
+            .output();
     }
 
     let s = format!("new task: {}", &slot.configured.name);
-    Notification::new()
-        .summary(&s)
-        .id(6006)
-        .show()
-        .unwrap();
+    Notification::new().summary(&s).id(6006).show().unwrap();
 }
-
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -577,7 +567,7 @@ fn timestamp_store() -> &'static AtomicU64 {
 fn current_unix_time() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs()
 }
 
@@ -586,8 +576,6 @@ fn update_timestamp() -> std::time::Duration {
     let prev = timestamp_store().swap(now, Ordering::SeqCst);
     std::time::Duration::from_secs(now - prev)
 }
-
-
 
 pub fn timed_input(timeout_secs: u64) -> Option<Event> {
     if event::poll(std::time::Duration::from_secs(timeout_secs)).ok()? {
@@ -633,10 +621,146 @@ fn format_naive(time: NaiveTime) -> String {
     format!("{:02}:{:02}", hours, minutes)
 }
 
+#[derive(Serialize, Deserialize, Default)]
+pub struct SlotDtos(Vec<SlotDto>);
+
+impl Deref for SlotDtos {
+    type Target = Vec<SlotDto>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl SlotDtos {
+    pub fn insert(&mut self, index: usize, slot: SlotDto) {
+        let mut inner = self.0.clone();
+        if index >= inner.len() {
+            inner.push(slot);
+        } else {
+            inner.insert(index, slot);
+        }
+
+        if Self::validate(&inner).is_ok() {
+            self.0 = inner;
+        }
+    }
+
+    pub fn remove(&mut self, idx: usize) {
+        if idx >= self.0.len() {
+            return;
+        }
+
+        let mut inner = self.0.clone();
+        inner.remove(idx);
+
+        if Self::validate(&inner).is_ok() {
+            self.0 = inner;
+        }
+    }
+
+    pub fn unset_start(&mut self, idx: usize) {
+        if idx >= self.0.len() {
+            return;
+        }
+
+        let mut inner = self.0.clone();
+        inner[idx].config.start = None;
+
+        if Self::validate(&inner).is_ok() {
+            self.0 = inner;
+        }
+    }
+
+    pub fn set_start(&mut self, idx: usize, start: NaiveTime) {
+        if idx >= self.0.len() {
+            return;
+        }
+
+        let mut inner = self.0.clone();
+        inner[idx].config.start = Some(start);
+
+        if Self::validate(&inner).is_ok() {
+            self.0 = inner;
+        }
+    }
+
+    pub fn swap(&mut self, i: usize, j: usize) {
+        let len = self.0.len();
+
+        if i >= len || j >= len {
+            return;
+        }
+
+        let mut inner = self.0.clone();
+        inner.swap(i, j);
+
+        if Self::validate(&inner).is_ok() {
+            self.0 = inner;
+        }
+    }
+
+    pub fn over_ride(&mut self, index: usize, slot: SlotDto) {
+        let mut inner = self.0.clone();
+        if index >= inner.len() {
+            return;
+        } else {
+            inner[index] = slot;
+        }
+
+        if Self::validate(&inner).is_ok() {
+            self.0 = inner;
+        }
+    }
+
+    pub fn make_valid(&mut self) {
+        let mut last_start: Option<NaiveTime> = None;
+
+        for slot in &mut self.0 {
+            let valid_time = if let Some(t) = &slot.config.start {
+                if let Some(prev_t) = &last_start {
+                    if t < prev_t {
+                        false
+                    } else {
+                        last_start = Some(*t);
+                        true
+                    }
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+
+            if !valid_time {
+                slot.config.start = None;
+            }
+        }
+    }
+
+    fn validate(slots: &Vec<SlotDto>) -> Result<(), ()> {
+        let mut last_start: Option<NaiveTime> = None;
+
+        for slot in slots {
+            if let Some(t) = &slot.config.start {
+                if let Some(prev_t) = &last_start {
+                    if t < prev_t {
+                        return Err(());
+                    } else {
+                        last_start = Some(*t);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Day {
     day: NaiveDate,
-    slots_config: Vec<SlotDto>,
+    slots_config: SlotDtos,
     #[serde(skip)]
     slot_result: SingletonCache<Vec<SlotDto>, Vec<SlotResult>>,
 }
@@ -645,7 +769,7 @@ impl DefaultWithId for Day {
     fn default_with_id(id: Self::Key) -> Self {
         Self {
             day: id,
-            slots_config: vec![],
+            slots_config: Default::default(),
             slot_result: Default::default(),
         }
     }

@@ -1,4 +1,5 @@
 use chrono::{Duration, NaiveTime};
+use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Display};
@@ -66,8 +67,11 @@ impl TimeSlotConfig {
         total_time: Duration,
         configs: Vec<SlotDto>,
     ) -> Vec<SlotResult> {
+        let configs: NonEmpty<SlotDto> = match NonEmpty::from_vec(configs)  {
+            Some(configs) => configs,
+            None => return vec![],
+        };
         let slotblocks = get_slotblocks(start_time, total_time, configs);
-        dbg!(&slotblocks);
         let mut out: Vec<SlotResult> = vec![];
 
         for block in slotblocks {
@@ -189,13 +193,13 @@ impl SlotAllocTime {
 struct SlotBlock {
     start: NaiveTime,
     /// Vector of slot length and if the slot length should be fixed
-    slots: Vec<SlotDto>,
+    slots: NonEmpty<SlotDto>,
     end_time: NaiveTime,
 }
 
 impl SlotBlock {
-    fn new(start: NaiveTime, slots: Vec<SlotDto>, end_time: NaiveTime) -> Self {
-        debug_assert!(end_time > start);
+    fn new(start: NaiveTime, slots: NonEmpty<SlotDto>, end_time: NaiveTime) -> Self {
+        assert!(end_time >= start);
 
         Self {
             start,
@@ -205,8 +209,7 @@ impl SlotBlock {
     }
 
     fn get_allocated(&self) -> SlotAllocTime {
-        debug_assert!(self.end_time > self.start);
-        debug_assert!(!self.slots.is_empty());
+        assert!(self.end_time > self.start);
 
         let tot_alloc = self.end_time - self.start;
         let tot_req_fixed: Duration = self
@@ -273,24 +276,29 @@ impl SlotBlock {
     }
 }
 
+fn append_blocks(start_time: NaiveTime, blocks: &mut NonEmpty<SlotBlock>, dtos: NonEmpty<SlotDto>) {
+
+}
+
 fn get_slotblocks(
     start_time: NaiveTime,
     total_time: Duration,
-    configs: Vec<SlotDto>,
-) -> Vec<SlotBlock> {
+    configs: NonEmpty<SlotDto>,
+) -> NonEmpty<SlotBlock> {
     let mut blocks: Vec<SlotBlock> = vec![];
+
     let mut buf: Vec<SlotDto> = vec![];
     let mut configs: VecDeque<SlotDto> = configs.into_iter().collect();
 
     while let Some(config) = configs.pop_front() {
         if let Some(start) = config.config.start {
-            if !buf.is_empty() {
+            if let Some(buf) =  NonEmpty::from_vec(mem::take(&mut buf)) {
                 let start_time = match blocks.last() {
                     Some(block) => block.end_time,
                     None => start_time,
                 };
 
-                let block = SlotBlock::new(start_time, mem::take(&mut buf), start);
+                let block = SlotBlock::new(start_time, buf, start);
 
                 blocks.push(block);
             }
@@ -299,7 +307,7 @@ fn get_slotblocks(
         buf.push(config);
     }
 
-    if !buf.is_empty() {
+    if let Some(buf) =  NonEmpty::from_vec(mem::take(&mut buf)) {
         let block_start_time = match blocks.last() {
             Some(block) => block.end_time,
             None => start_time,
@@ -307,14 +315,16 @@ fn get_slotblocks(
 
         let block = SlotBlock::new(
             block_start_time,
-            mem::take(&mut buf),
+            buf,
             start_time + total_time,
         );
 
         blocks.push(block);
+
     }
 
-    blocks
+
+    NonEmpty::from_vec(blocks).unwrap()
 }
 
 pub fn t(h: u32, m: u32) -> NaiveTime {
@@ -324,116 +334,3 @@ pub fn t(h: u32, m: u32) -> NaiveTime {
 pub fn dur(mins: i64) -> Duration {
     Duration::minutes(mins)
 }
-
-/*
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::{Duration, NaiveTime};
-
-    fn slot(start: Option<NaiveTime>, length: i64, fixed: bool) -> TimeSlotConfig {
-        TimeSlotConfig {
-            start,
-            length: dur(length),
-            fixed_length: fixed,
-        }
-    }
-
-    #[test]
-    fn calc_slots() {
-        let start_time = t(7, 0);
-        let total_time = dur(16 * 60);
-        let configs = vec![
-            slot(None, 10, false),
-            slot(None, 20, false),
-            slot(Some(t(10, 45)), 15, true),
-            slot(Some(t(11, 15)), 15, false),
-            slot(None, 20, false),
-            slot(None, 20, false),
-        ];
-
-        let res = TimeSlotConfig::calculate_slots(start_time, total_time, configs);
-        dbg!(res);
-    }
-
-    #[test]
-    fn test_no_fixed_starts() {
-        let start_time = t(8, 0);
-        let total_time = dur(60);
-        let configs = vec![slot(None, 10, false), slot(None, 20, false)];
-
-        let blocks = get_slotblocks(start_time, total_time, configs);
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].slots.len(), 2);
-        assert_eq!(blocks[0].end_time, t(9, 0));
-    }
-
-    #[test]
-    fn test_single_fixed_start() {
-        let start_time = t(8, 0);
-        let total_time = dur(90);
-        let configs = vec![
-            slot(None, 10, false),          // should fill up entire first hour
-            slot(Some(t(9, 0)), 10, false), // should start at 9, and be half the length as the next
-        ];
-
-        let blocks = get_slotblocks(start_time, total_time, configs);
-
-        assert_eq!(blocks.len(), 2);
-
-        // First block ends at 09:00
-        assert_eq!(blocks[0].end_time, t(9, 0));
-        assert_eq!(blocks[0].slots.len(), 1); // only the first slot
-
-        // Second block ends at 09:30 because it fills the entire allocated time
-        assert_eq!(blocks[1].end_time, t(9, 30));
-        assert_eq!(blocks[1].slots.len(), 1);
-    }
-
-    #[test]
-    fn test_multiple_fixed_starts() {
-        let start_time = t(8, 0);
-        let total_time = dur(180);
-        let configs = vec![
-            slot(None, 10, false),
-            slot(Some(t(9, 0)), 15, true),
-            slot(Some(t(10, 0)), 20, true),
-        ];
-
-        let blocks = get_slotblocks(start_time, total_time, configs);
-
-        assert_eq!(blocks.len(), 3);
-
-        assert_eq!(blocks[0].slots.len(), 1); // first slot before fixed time
-        assert_eq!(blocks[0].end_time, t(9, 0));
-
-        assert_eq!(blocks[1].slots.len(), 1);
-        assert_eq!(blocks[1].end_time, t(10, 0)); // 09:00 + 15
-
-        assert_eq!(blocks[2].slots.len(), 1);
-        assert_eq!(blocks[2].end_time, start_time + total_time); // 10:00 + 20
-    }
-
-    #[test]
-    fn test_only_fixed_starts() {
-        let start_time = t(7, 0);
-        let total_time = dur(120);
-        let configs = vec![slot(Some(t(8, 0)), 15, true), slot(Some(t(9, 0)), 20, true)];
-
-        let blocks = get_slotblocks(start_time, total_time, configs);
-
-        dbg!(&blocks);
-
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].end_time, t(9, 0));
-        assert_eq!(blocks[1].end_time, start_time + total_time);
-    }
-
-    #[test]
-    fn test_empty_config() {
-        let blocks = get_slotblocks(t(8, 0), dur(60), vec![]);
-        assert_eq!(blocks.len(), 0);
-    }
-}
-
-*/
