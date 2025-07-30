@@ -552,7 +552,7 @@ fn on_new_slot(slot: &SlotResult) {
     }
 
     let s = format!("new task: {}", &slot.configured.name);
-    Notification::new().summary(&s).id(6006).show().unwrap();
+    let _ = Notification::new().summary(&s).id(6006).show();
 }
 
 use std::sync::atomic::{AtomicU64, Ordering};
