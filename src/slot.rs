@@ -1,4 +1,5 @@
-use chrono::{Duration, NaiveTime};
+use chrono::Duration;
+use crossterm::terminal::disable_raw_mode;
 use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -9,7 +10,7 @@ use uuid::Uuid;
 type ActId = Uuid;
 
 pub fn calculate_slots(
-    start_time: NaiveTime,
+    start_time: TimeSinceMidnight,
     total_time: Duration,
     configs: Vec<SlotDto>,
 ) -> Vec<SlotResult> {
@@ -46,7 +47,7 @@ pub enum ScheduleError {
 /// The configuration for when a slot should be. Doesn't mean it will be on that time that depends on its constraints
 #[derive(Clone, Serialize, Deserialize, Debug, Hash, Eq, PartialEq)]
 pub struct TimeSlotConfig {
-    pub start: Option<NaiveTime>,
+    pub start: Option<TimeSinceMidnight>,
     pub length: Duration,
     pub fixed_length: bool,
 }
@@ -63,11 +64,11 @@ impl Default for TimeSlotConfig {
 
 impl TimeSlotConfig {
     pub fn calculate_slots(
-        start_time: NaiveTime,
+        start_time: TimeSinceMidnight,
         total_time: Duration,
         configs: Vec<SlotDto>,
     ) -> Vec<SlotResult> {
-        let configs: NonEmpty<SlotDto> = match NonEmpty::from_vec(configs)  {
+        let configs: NonEmpty<SlotDto> = match NonEmpty::from_vec(configs) {
             Some(configs) => configs,
             None => return vec![],
         };
@@ -88,10 +89,12 @@ impl TimeSlotConfig {
 
 use humantime;
 
+use crate::TimeSinceMidnight;
+
 /// The calculated start and length time of a slot after having to fit within constraints
 #[derive(PartialEq, Eq, Clone)]
 pub struct SlotResult {
-    pub start: NaiveTime,
+    pub start: TimeSinceMidnight,
     pub length: Duration,
     pub warning: Result<(), ScheduleError>,
     pub configured: SlotDto,
@@ -185,20 +188,34 @@ impl SlotAllocTime {
     }
 }
 
+impl Display for SlotBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let vec: Vec<SlotDto> = self.slots.clone().into();
+        let slots: String = serde_json::to_string_pretty(&vec).unwrap();
+        let mut s: String = Default::default();
+
+        s.push_str(&format!("start: {}\n", &self.start));
+        s.push_str(&format!("end: {}\n", &self.end_time));
+        s.push_str(&format!("blocks: {}\n", &slots));
+
+        write!(f, "{s}")
+    }
+}
+
 /// Represents a bunch of slots between two fixed start times
 ///
 /// invariants: start < end_time
 /// !slots.is_empty()
 #[derive(Debug)]
 struct SlotBlock {
-    start: NaiveTime,
+    start: Duration,
     /// Vector of slot length and if the slot length should be fixed
     slots: NonEmpty<SlotDto>,
-    end_time: NaiveTime,
+    end_time: Duration,
 }
 
 impl SlotBlock {
-    fn new(start: NaiveTime, slots: NonEmpty<SlotDto>, end_time: NaiveTime) -> Self {
+    fn new(start: Duration, slots: NonEmpty<SlotDto>, end_time: Duration) -> Self {
         assert!(end_time >= start);
 
         Self {
@@ -276,15 +293,13 @@ impl SlotBlock {
     }
 }
 
-fn append_blocks(start_time: NaiveTime, blocks: &mut NonEmpty<SlotBlock>, dtos: NonEmpty<SlotDto>) {
-
-}
-
 fn get_slotblocks(
-    start_time: NaiveTime,
+    start_time: TimeSinceMidnight,
     total_time: Duration,
     configs: NonEmpty<SlotDto>,
 ) -> NonEmpty<SlotBlock> {
+    let cloned_configs = configs.clone();
+
     let mut blocks: Vec<SlotBlock> = vec![];
 
     let mut buf: Vec<SlotDto> = vec![];
@@ -292,7 +307,7 @@ fn get_slotblocks(
 
     while let Some(config) = configs.pop_front() {
         if let Some(start) = config.config.start {
-            if let Some(buf) =  NonEmpty::from_vec(mem::take(&mut buf)) {
+            if let Some(buf) = NonEmpty::from_vec(mem::take(&mut buf)) {
                 let start_time = match blocks.last() {
                     Some(block) => block.end_time,
                     None => start_time,
@@ -307,28 +322,37 @@ fn get_slotblocks(
         buf.push(config);
     }
 
-    if let Some(buf) =  NonEmpty::from_vec(mem::take(&mut buf)) {
+    if let Some(buf) = NonEmpty::from_vec(mem::take(&mut buf)) {
         let block_start_time = match blocks.last() {
             Some(block) => block.end_time,
             None => start_time,
         };
 
-        let block = SlotBlock::new(
-            block_start_time,
-            buf,
-            start_time + total_time,
-        );
+        let end_time = start_time + total_time;
+
+        if end_time < start_time {
+            disable_raw_mode().unwrap();
+            dbg!(&block_start_time, start_time, total_time);
+            dbg!(&end_time);
+
+            for config in cloned_configs {
+                dbg!(config);
+            }
+
+            panic!();
+        }
+
+        let block = SlotBlock::new(block_start_time, buf, end_time);
 
         blocks.push(block);
-
     }
-
 
     NonEmpty::from_vec(blocks).unwrap()
 }
 
-pub fn t(h: u32, m: u32) -> NaiveTime {
-    NaiveTime::from_hms_opt(h, m, 0).unwrap()
+pub fn t(h: u32, m: u32) -> TimeSinceMidnight {
+    let secs = h * 3600 + m * 60;
+    TimeSinceMidnight::from_std(std::time::Duration::from_secs(secs as u64)).unwrap()
 }
 
 pub fn dur(mins: i64) -> Duration {

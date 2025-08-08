@@ -14,9 +14,11 @@ use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+type TimeSinceMidnight = Duration;
+
 use vedvaring::{DefaultWithId, FsTrait, Saved};
 
-use chrono::{Duration, Local, NaiveDate, NaiveTime, Timelike};
+use chrono::{Duration, Local, NaiveDate, NaiveTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -26,12 +28,40 @@ type SlotId = Uuid;
 use crossterm::{terminal, ExecutableCommand};
 use std::io::{self, Stdout, Write};
 
-fn current_time() -> NaiveTime {
-    Local::now().time()
+const DAY_OFFSET_SEC: i64 = 3 * 60 * 60;
+
+fn is_past_midnight() -> bool {
+    let from_mid = Local::now()
+        .time()
+        .signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+
+    from_mid.num_seconds() < DAY_OFFSET_SEC
+}
+
+fn naive_to_timesincemidnight(naive: NaiveTime) -> TimeSinceMidnight {
+    let from_mid = naive.signed_duration_since(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+
+    let mut secs_since_midinght = from_mid.num_seconds();
+
+    if secs_since_midinght < DAY_OFFSET_SEC {
+        secs_since_midinght += DAY_OFFSET_SEC;
+    }
+
+    TimeSinceMidnight::seconds(secs_since_midinght)
+}
+
+fn current_time() -> TimeSinceMidnight {
+    naive_to_timesincemidnight(Local::now().time())
 }
 
 fn current_day() -> NaiveDate {
-    Local::now().date_naive()
+    let mut day = Local::now().date_naive();
+
+    if is_past_midnight() {
+        day = day.pred_opt().unwrap();
+    }
+
+    day
 }
 
 #[derive(Default)]
@@ -58,6 +88,12 @@ fn main() {
     let mut app = App::start();
 
     enable_raw_mode().unwrap();
+
+    std::panic::set_hook(Box::new(|info| {
+        let _ = terminal::disable_raw_mode();
+        eprintln!("Panic: {info}");
+    }));
+
     app.run();
     disable_raw_mode().unwrap();
 }
@@ -253,7 +289,7 @@ impl App {
         }
     }
 
-    fn get_naivetime(&mut self, prompt: impl AsRef<str>) -> Option<NaiveTime> {
+    fn get_naivetime(&mut self, prompt: impl AsRef<str>) -> Option<TimeSinceMidnight> {
         loop {
             let s = self.get_user_input(&prompt).unwrap();
             if s.is_empty() {
@@ -261,6 +297,7 @@ impl App {
             };
 
             if let Ok(time) = NaiveTime::parse_from_str(&s, "%H:%M") {
+                let time = naive_to_timesincemidnight(time);
                 return Some(time);
             }
         }
@@ -585,7 +622,7 @@ pub fn timed_input(timeout_secs: u64) -> Option<Event> {
     }
 }
 
-fn clock_emoji(time: NaiveTime) -> char {
+fn clock_emoji(time: TimeSinceMidnight) -> char {
     let (hour, minute) = hour_and_minute(time);
     let rounded_hour = match minute {
         0..=14 => hour,
@@ -604,11 +641,12 @@ fn clock_emoji(time: NaiveTime) -> char {
     std::char::from_u32(codepoint).unwrap_or('🕛') // fallback just in case
 }
 
-fn hour_and_minute(time: NaiveTime) -> (u32, u32) {
-    let secs = time.num_seconds_from_midnight();
+fn hour_and_minute(time: TimeSinceMidnight) -> (u32, u32) {
+    let secs = time.num_seconds();
     let hours = secs / 3600;
-    let minutes = (secs % 3600) / 60;
-    (hours, minutes)
+    let rem = secs - (hours * 3600);
+    let minutes = rem / 60;
+    (hours as u32, minutes as u32)
 }
 
 fn format_dur(dur: Duration) -> String {
@@ -616,7 +654,7 @@ fn format_dur(dur: Duration) -> String {
     format!("{:>5}m", mins)
 }
 
-fn format_naive(time: NaiveTime) -> String {
+fn format_naive(time: TimeSinceMidnight) -> String {
     let (hours, minutes) = hour_and_minute(time);
     format!("{:02}:{:02}", hours, minutes)
 }
@@ -672,7 +710,7 @@ impl SlotDtos {
         }
     }
 
-    pub fn set_start(&mut self, idx: usize, start: NaiveTime) {
+    pub fn set_start(&mut self, idx: usize, start: TimeSinceMidnight) {
         if idx >= self.0.len() {
             return;
         }
@@ -714,7 +752,7 @@ impl SlotDtos {
     }
 
     pub fn make_valid(&mut self) {
-        let mut last_start: Option<NaiveTime> = None;
+        let mut last_start: Option<TimeSinceMidnight> = None;
 
         for slot in &mut self.0 {
             let valid_time = if let Some(t) = &slot.config.start {
@@ -739,7 +777,7 @@ impl SlotDtos {
     }
 
     fn validate(slots: &Vec<SlotDto>) -> Result<(), ()> {
-        let mut last_start: Option<NaiveTime> = None;
+        let mut last_start: Option<TimeSinceMidnight> = None;
 
         for slot in slots {
             if let Some(t) = &slot.config.start {
